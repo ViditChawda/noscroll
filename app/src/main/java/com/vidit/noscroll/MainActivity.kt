@@ -59,12 +59,76 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
+        val openStats = View.OnClickListener { startActivity(Intent(this, StatsActivity::class.java)) }
+        findViewById<View>(R.id.viewAllBtn).setOnClickListener(openStats)
+        (findViewById<View>(R.id.blockedToday).parent as View).setOnClickListener(openStats)
+        (findViewById<View>(R.id.scrolledToday).parent as View).setOnClickListener(openStats)
+
+        findViewById<View>(R.id.timeLimitRow).setOnClickListener {
+            pickLimit("Daily time limit", Limits.TIME_OPTIONS_MIN, Prefs.TIME_LIMIT_MIN) { Limits.label(it) }
+        }
+        findViewById<View>(R.id.countLimitRow).setOnClickListener {
+            pickLimit("Daily reels limit", Limits.COUNT_OPTIONS, Prefs.COUNT_LIMIT) {
+                if (it == 0) "Off" else "$it reels"
+            }
+        }
+
         playEntrance()
+    }
+
+    private fun pickLimit(title: String, options: IntArray, key: String, label: (Int) -> String) {
+        val current = Prefs.getInt(this, key)
+        val checked = options.indexOf(current).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(title)
+            .setSingleChoiceItems(options.map(label).toTypedArray(), checked) { d, which ->
+                Prefs.setInt(this, key, options[which])
+                renderLimits()
+                updateTabsRow()
+                d.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun renderLimits() {
+        val st = Limits.status(this)
+        val usedMin = (st.usedMs / 60_000L).toInt()
+        val pink = ContextCompat.getColor(this, R.color.brand_pink)
+        val green = Color.parseColor("#34D399")
+
+        val tl = Limits.timeLimitMin(this)
+        findViewById<TextView>(R.id.timeLimitValue).text = Limits.label(tl)
+        findViewById<TextView>(R.id.timeLimitSub).text = when {
+            tl == 0 -> "$usedMin min watched today"
+            st.timeReached -> "Reached for today · raise it to keep going"
+            else -> "$usedMin of ${Limits.label(tl)} used today"
+        }
+        findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.timeLimitProgress).apply {
+            visibility = if (tl == 0) View.GONE else View.VISIBLE
+            setIndicatorColor(if (st.timeReached) pink else green)
+            setProgressCompat(if (tl == 0) 0 else (st.usedMs * 1000 / st.timeLimitMs).toInt().coerceIn(0, 1000), true)
+        }
+
+        val cl = Limits.countLimit(this)
+        findViewById<TextView>(R.id.countLimitValue).text = if (cl == 0) "Off" else "$cl"
+        findViewById<TextView>(R.id.countLimitSub).text = when {
+            cl == 0 -> "${st.count} scrolled today"
+            st.countReached -> "Reached for today · raise it to keep going"
+            else -> "${st.count} of $cl used today"
+        }
+        findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.countLimitProgress).apply {
+            visibility = if (cl == 0) View.GONE else View.VISIBLE
+            setIndicatorColor(if (st.countReached) pink else green)
+            setProgressCompat(if (cl == 0) 0 else (st.count * 1000 / cl).coerceIn(0, 1000), true)
+        }
     }
 
     override fun onResume() {
         super.onResume()
         renderStatus(isServiceEnabled())
+        updateTabsRow()
+        renderLimits()
         countUp(findViewById(R.id.blockedToday), Prefs.blockedToday(this))
         countUp(findViewById(R.id.scrolledToday), Prefs.scrolledToday(this))
         findViewById<TextView>(R.id.blockedTotal).text = "All time: ${Prefs.blockedTotal(this)}"
@@ -110,8 +174,21 @@ class MainActivity : AppCompatActivity() {
     private fun bindRow(rowId: Int, switchId: Int, key: String) {
         val sw = findViewById<MaterialSwitch>(switchId)
         sw.isChecked = Prefs.get(this, key)
-        sw.setOnCheckedChangeListener { _, checked -> Prefs.set(this, key, checked) }
+        sw.setOnCheckedChangeListener { _, checked ->
+            Prefs.set(this, key, checked)
+            updateTabsRow()
+        }
         findViewById<View>(rowId).setOnClickListener { sw.toggle() }
+    }
+
+    /** Dim the options that do nothing with the current blocking setup. */
+    private fun updateTabsRow() {
+        val anyBlock = Prefs.get(this, Prefs.BLOCK_REELS) || Prefs.get(this, Prefs.BLOCK_SHORTS) ||
+            Limits.timeLimitMin(this) > 0 || Limits.countLimit(this) > 0
+        findViewById<View>(R.id.tabsRow).alpha = if (anyBlock) 1f else 0.45f
+        // Limits only matter for an app that isn't always blocked.
+        val anyAllowed = !Prefs.get(this, Prefs.BLOCK_REELS) || !Prefs.get(this, Prefs.BLOCK_SHORTS)
+        findViewById<View>(R.id.limitsCard).alpha = if (anyAllowed) 1f else 0.45f
     }
 
     /** Numbers tick up from 0 when you open the app. */

@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">NoScroll</string>
     <string name="service_label">NoScroll – Reels &amp; Shorts blocker</string>
-    <string name="service_description">NoScroll reads the screen only inside Instagram and YouTube to detect Reels or Shorts. It can exit them, hide their tab buttons, or count how many you scroll. For other apps it only checks which app is open so it can remove its overlays. No data is collected, stored, or sent anywhere.</string>
+    <string name="service_description">NoScroll reads the screen only inside Instagram and YouTube to detect Reels or Shorts. It can exit them, hide their tab buttons, or count how many you scroll. To match colours it briefly looks at the app\'s bottom bar. For other apps it only checks which app is open so it can remove its overlays. No data is collected, stored, or sent anywhere.</string>
     <string name="disclosure">NoScroll uses Android\'s Accessibility Service to detect Reels (Instagram) and Shorts (YouTube) on screen. It can automatically exit them, hide their tab buttons, and show a live counter of how many you\'ve scrolled.\n\nIt only reads the screen inside those two apps. Nothing you see or type is stored or sent anywhere.</string>
 </resources>
