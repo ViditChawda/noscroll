@@ -10,7 +10,6 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
-import kotlin.math.abs
 import kotlin.math.min
 
 /**
@@ -50,16 +49,29 @@ class BlockerService : AccessibilityService() {
             "clips_video_container",
             "clips_ufi_component",
         )
-        // The vertical pager you swipe through.
-        private val PAGER_IDS = listOf("clips_viewer_view_pager", "reel_recycler")
+        // Button labels etc. that are the same on every reel (lower-case). Anything with a digit
+        // (likes, views, timers) is ignored too. Strings seen on several reels are learned as UI.
+        private val STOP_WORDS = setOf(
+            "like", "liked", "unlike", "likes", "comment", "comments", "share", "send", "remix",
+            "subscribe", "subscribed", "unsubscribe", "follow", "following", "followed", "more", "less",
+            "reels", "reel", "shorts", "short", "audio", "original audio", "search", "camera", "home",
+            "dislike", "dislike this video", "save", "saved", "back", "navigate up", "more options",
+            "menu", "pause", "play", "pause video", "play video", "mute", "unmute", "sound on", "sound off",
+            "profile", "your story", "explore", "create", "notifications", "see translation", "view all",
+            "add a comment…", "add comment", "add a comment...", "sponsored", "learn more", "use template",
+            "use audio", "remix this", "view insights", "boost reel", "subscriptions", "you", "library",
+            "go to channel", "see more", "close", "options", "share this video", "comments disabled.",
+            "visit profile", "messages", "direct", "new post", "reels tab", "home tab", "search and explore",
+        )
+        private const val STABLE_MS = 450L        // a reel's text must hold still this long
+        private const val MAX_STRINGS = 150
+        private val WHITESPACE = Regex("\\s+")
 
         private const val EVENT_SCAN_DELAY_MS = 60L   // small batch window for event bursts
         private const val TICK_MS = 500L              // regular re-check while inside IG / YT
         private const val BACK_COOLDOWN_MS = 1200L    // avoid double-back that exits the app
         private const val PLAYER_EXIT_GRACE_MS = 900L // ignore brief flickers (comments sheet etc.)
         private const val SESSION_GAP_MS = 3000L      // away longer than this = new session
-        private const val PAGE_TRACK_GRACE_MS = 1500L // fall back to scroll events if pages aren't found
-        private const val SCROLL_BURST_GAP_MS = 700L
         private const val MAX_DEPTH = 40
     }
 
@@ -92,10 +104,16 @@ class BlockerService : AccessibilityService() {
     private var playerApp = App.IG
     private var playerSince = 0L
     private var lastSeenPlayer = 0L
-    private var lastPageKey = -1
-    private val seenRows = HashSet<Int>()
-    private var pageTrackingWorks = false
-    private var lastScrollAt = 0L
+
+    // reel recognition (see trackReel)
+    private var candidate: Set<String>? = null
+    private var candidateSince = 0L
+    private var lastReel: Set<String>? = null
+    private val seenReels = ArrayList<Set<String>>()
+    private val chromeFreq = HashMap<String, Int>() // how many different reels a string showed up in
+    private val chrome = HashSet<String>()          // strings shared by reels = UI, not content
+    private var sawScroll = false
+    private var everScrolled = false
 
     // time tracking
     private var lastTimeMark = 0L
@@ -117,9 +135,7 @@ class BlockerService : AccessibilityService() {
 
         if (pkg == IG || pkg == YT) {
             if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
-                val sourceId = event.source?.viewIdResourceName
-                val fromIndex = event.fromIndex
-                bg.post { onPlayerScroll(sourceId, fromIndex) }
+                bg.post { if (inPlayer) { sawScroll = true; everScrolled = true } }
             }
             requestScan()
         } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -167,7 +183,18 @@ class BlockerService : AccessibilityService() {
         val app = if (isYt) App.YT else App.IG
         if (DEBUG_DUMP) dump(root, 0)
 
-        val playerOnScreen = containsAnyId(root, if (isYt) YT_SHORTS_IDS else IG_REELS_IDS, 0)
+        val ids = if (isYt) YT_SHORTS_IDS else IG_REELS_IDS
+        val playerOnScreen = containsAnyId(root, ids, 0)
+        // Comments / share sheets can open as their own window on top of the player.
+        // Then we're still "in Reels", just not counting until the sheet closes.
+        val playerUnderSheet = !playerOnScreen && inPlayer && try {
+            windows.any { w ->
+                val wr = w.root
+                wr != null && wr.packageName?.toString() == pkg && containsAnyId(wr, ids, 0)
+            }
+        } catch (e: Exception) {
+            false
+        }
         val alwaysBlock = Prefs.blockEnabled(this, app)
         val limit = Limits.status(this, pendingMs)
         // Time limit closes the player right away. The reels limit lets you finish the reel
@@ -181,8 +208,10 @@ class BlockerService : AccessibilityService() {
         } else if (playerOnScreen) {
             lastSeenPlayer = now
             if (!inPlayer || playerApp != app) enterPlayer(app, now)
-            trackPage(root, app, now)
+            trackReel(root, app, now)
             if (inPlayer) refreshPill(animateCount = false)
+        } else if (playerUnderSheet) {
+            lastSeenPlayer = now
         } else if (inPlayer && now - lastSeenPlayer >= PLAYER_EXIT_GRACE_MS) {
             exitPlayer()
         }
@@ -214,12 +243,15 @@ class BlockerService : AccessibilityService() {
         playerApp = app
         playerSince = now
         lastSeenPlayer = now
-        lastPageKey = -1
-        seenRows.clear()
-        pageTrackingWorks = false
-        lastScrollAt = now
+        candidate = null
+        lastReel = null
+        seenReels.clear()
+        sawScroll = false
+        everScrolled = false
         lastTimeMark = now
-        if (Prefs.get(this, Prefs.SHOW_COUNTER)) {
+        // The reel you just opened counts right away.
+        onNewReel(app, now, animate = false)
+        if (inPlayer && Prefs.get(this, Prefs.SHOW_COUNTER)) {
             val st = pillState()
             ui { counter.show(st) }
         }
@@ -234,47 +266,91 @@ class BlockerService : AccessibilityService() {
     }
 
     /**
-     * Finds the page that is fully settled in the pager and counts it if it's a new one.
-     * Mid-swipe (no page fully on screen) nothing happens.
+     * Recognises reels by what's written on them (username / channel, caption, audio name).
+     * Once the text on screen has held still for a moment, compare it with the last reel:
+     * if most of that reel's text is gone and new text appeared, it's a new reel.
+     *  - opening comments / expanding a caption keeps the old text → not counted
+     *  - scrolling back to a reel you've already seen → not counted again
      */
-    private fun trackPage(root: AccessibilityNodeInfo, app: App, now: Long) {
-        val pager = findPager(root) ?: return
-        val pr = Rect().also { pager.getBoundsInScreen(it) }
-        if (pr.height() <= 0) return
+    private fun trackReel(root: AccessibilityNodeInfo, app: App, now: Long) {
+        val snap = collectStrings(root)
+        if (snap.isEmpty()) return
 
-        var settled: AccessibilityNodeInfo? = null
-        for (i in 0 until pager.childCount) {
-            val c = pager.getChild(i) ?: continue
-            val b = Rect().also { c.getBoundsInScreen(it) }
-            if (b.height() >= pr.height() * 0.9f && abs(b.top - pr.top) <= pr.height() * 0.06f) {
-                settled = c
-                break
+        // Wait until the screen settles (mid-swipe shows two reels at once).
+        val cand = candidate
+        if (cand == null || jaccard(cand, snap) < 0.8f) {
+            candidate = snap
+            candidateSince = now
+            return
+        }
+        candidate = snap
+        if (now - candidateSince < STABLE_MS) return
+
+        val base = lastReel
+        if (base == null) { // first settled reel of this visit (already counted on entry)
+            commitReel(snap)
+            return
+        }
+        // If this app reports scrolling at all, only consider a new reel after a scroll.
+        if (everScrolled && !sawScroll) return
+
+        val cur = snap - chrome
+        val prev = base - chrome
+        if (prev.isEmpty()) { commitReel(snap); return }
+        val gone = prev.count { it !in cur }.toFloat() / prev.size
+        val appeared = cur.count { it !in prev }
+        val goneCount = prev.count { it !in cur }
+        val isNewReel = (goneCount >= 2 && appeared >= 2) || (gone >= 0.5f && appeared >= 1 && prev.size <= 3)
+        if (isNewReel) {
+            val seenBefore = seenReels.any { jaccard(it - chrome, cur) >= 0.7f }
+            commitReel(snap)
+            if (!seenBefore) onNewReel(app, now, animate = true)
+        }
+    }
+
+    private fun commitReel(snap: Set<String>) {
+        lastReel = snap
+        seenReels += snap
+        if (seenReels.size > 300) seenReels.removeAt(0)
+        sawScroll = false
+        for (t in snap) {
+            val f = (chromeFreq[t] ?: 0) + 1
+            chromeFreq[t] = f
+            if (f >= 3) chrome += t
+        }
+        if (chromeFreq.size > 5000) chromeFreq.clear()
+    }
+
+    /** Normalised visible text on screen, minus UI labels and anything with numbers. */
+    private fun collectStrings(root: AccessibilityNodeInfo): Set<String> {
+        val out = HashSet<String>()
+        fun add(cs: CharSequence?) {
+            if (cs == null || out.size >= MAX_STRINGS) return
+            val t = cs.toString().trim().replace(WHITESPACE, " ").lowercase()
+            if (t.length < 2 || t.length > 160) return
+            if (t.any { it.isDigit() }) return
+            if (t in STOP_WORDS) return
+            out += t
+        }
+        fun visit(n: AccessibilityNodeInfo?, depth: Int) {
+            if (n == null || depth > MAX_DEPTH || out.size >= MAX_STRINGS) return
+            if (n.isVisibleToUser) {
+                add(n.text)
+                add(n.contentDescription)
             }
+            for (i in 0 until n.childCount) visit(n.getChild(i), depth + 1)
         }
-        val page = settled ?: return
-        pageTrackingWorks = true
-
-        val key = page.hashCode() // stable per view; neighbouring pages are always different views
-        val row = page.collectionItemInfo?.rowIndex ?: -1
-        val isNew = when {
-            row >= 0 -> seenRows.add(row) // scrolling back to one you've seen doesn't count again
-            else -> key != lastPageKey
-        }
-        lastPageKey = key
-        if (isNew) onNewReel(app, now)
+        visit(root, 0)
+        return out
     }
 
-    /** Fallback when the pager's pages can't be read: count each separate swipe burst. */
-    private fun onPlayerScroll(sourceId: String?, fromIndex: Int) {
-        if (!inPlayer || pageTrackingWorks) return
-        val now = SystemClock.uptimeMillis()
-        if (now - playerSince < PAGE_TRACK_GRACE_MS) return
-        if (sourceId != null && PAGER_IDS.none { sourceId.endsWith("/$it") }) return
-        if (now - lastScrollAt > SCROLL_BURST_GAP_MS) onNewReel(playerApp, now)
-        lastScrollAt = now
+    private fun jaccard(a: Set<String>, b: Set<String>): Float {
+        if (a.isEmpty() && b.isEmpty()) return 1f
+        val inter = a.count { it in b }
+        return inter.toFloat() / (a.size + b.size - inter)
     }
 
-    private fun onNewReel(app: App, now: Long) {
+    private fun onNewReel(app: App, now: Long, animate: Boolean) {
         // Reels limit: you get exactly N, the next one closes the player.
         if (Limits.countLimit(this) > 0 && Prefs.scrolledToday(this) >= Limits.countLimit(this) &&
             !Prefs.blockEnabled(this, app)
@@ -285,7 +361,7 @@ class BlockerService : AccessibilityService() {
         }
         sessionCount++
         Prefs.addScrolled(this, app, 1)
-        refreshPill(animateCount = true)
+        refreshPill(animateCount = animate)
     }
 
     // ---------- time ----------
@@ -334,29 +410,6 @@ class BlockerService : AccessibilityService() {
             if (containsAnyId(node.getChild(i), ids, depth + 1)) return true
         }
         return false
-    }
-
-    /** The vertical pager: a known ID, else the largest scrollable node on screen. */
-    private fun findPager(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        var byId: AccessibilityNodeInfo? = null
-        var biggest: AccessibilityNodeInfo? = null
-        var biggestArea = 0
-        fun visit(n: AccessibilityNodeInfo?, depth: Int) {
-            if (n == null || depth > MAX_DEPTH || byId != null) return
-            val id = n.viewIdResourceName
-            if (id != null && PAGER_IDS.any { id.endsWith("/$it") } && n.isVisibleToUser) {
-                byId = n
-                return
-            }
-            if (n.isScrollable && n.isVisibleToUser) {
-                val r = Rect().also { n.getBoundsInScreen(it) }
-                val area = r.width() * r.height()
-                if (area > biggestArea) { biggestArea = area; biggest = n }
-            }
-            for (i in 0 until n.childCount) visit(n.getChild(i), depth + 1)
-        }
-        visit(root, 0)
-        return byId ?: biggest
     }
 
     /** Finds the bottom-nav "Reels"/"Shorts" tab and returns its on-screen bounds. */
