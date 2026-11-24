@@ -15,6 +15,17 @@ android {
         versionName = "1.1"
     }
 
+    // A fixed debug key (standard public "android" password, not a secret) so every
+    // CI build has the same signature and new APKs install over old ones.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
