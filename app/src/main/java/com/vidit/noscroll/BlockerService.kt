@@ -63,7 +63,7 @@ class BlockerService : AccessibilityService() {
             "go to channel", "see more", "close", "options", "share this video", "comments disabled.",
             "visit profile", "messages", "direct", "new post", "reels tab", "home tab", "search and explore",
         )
-        private const val STABLE_MS = 450L        // a reel's text must hold still this long
+        private const val STABLE_MS = 200L        // a reel's text must hold still this long
         private const val MAX_STRINGS = 150
         private val WHITESPACE = Regex("\\s+")
 
@@ -115,6 +115,11 @@ class BlockerService : AccessibilityService() {
     private var sawScroll = false
     private var everScrolled = false
 
+    // reel position from the pager's scroll events (best signal when the app provides it)
+    private var pagerKey = 0
+    private var maxIndex = -1
+    private var indexMode = false
+
     // time tracking
     private var lastTimeMark = 0L
     private var pendingMs = 0L
@@ -135,7 +140,13 @@ class BlockerService : AccessibilityService() {
 
         if (pkg == IG || pkg == YT) {
             if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
-                bg.post { if (inPlayer) { sawScroll = true; everScrolled = true } }
+                // Read everything now: the event object is recycled after this call.
+                val from = event.fromIndex
+                val itemCount = event.itemCount
+                val src = event.source
+                val key = src?.hashCode() ?: 0
+                val h = src?.let { n -> Rect().also { n.getBoundsInScreen(it) }.height() } ?: 0
+                bg.post { onScroll(from, itemCount, key, h) }
             }
             requestScan()
         } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
@@ -248,6 +259,9 @@ class BlockerService : AccessibilityService() {
         seenReels.clear()
         sawScroll = false
         everScrolled = false
+        pagerKey = 0
+        maxIndex = -1
+        indexMode = false
         lastTimeMark = now
         // The reel you just opened counts right away.
         onNewReel(app, now, animate = false)
@@ -273,6 +287,7 @@ class BlockerService : AccessibilityService() {
      *  - scrolling back to a reel you've already seen → not counted again
      */
     private fun trackReel(root: AccessibilityNodeInfo, app: App, now: Long) {
+        if (indexMode) return // the pager tells us positions; that's more precise
         val snap = collectStrings(root)
         if (snap.isEmpty()) return
 
@@ -305,6 +320,34 @@ class BlockerService : AccessibilityService() {
             val seenBefore = seenReels.any { jaccard(it - chrome, cur) >= 0.7f }
             commitReel(snap)
             if (!seenBefore) onNewReel(app, now, animate = true)
+        }
+    }
+
+    /**
+     * Scroll events from the full-screen pager carry the position of the reel on screen.
+     * Each step forward to a position not reached before = one more reel, so a fast fling
+     * past 4 reels counts 4. Scrolling back and forward again doesn't recount.
+     */
+    private fun onScroll(from: Int, itemCount: Int, key: Int, height: Int) {
+        if (!inPlayer) return
+        sawScroll = true
+        everScrolled = true
+        if (from < 0 || itemCount <= 1 || key == 0) return
+        if (pagerKey == 0) {
+            // Lock onto the first big list that scrolls in the player: the reels pager.
+            if (height < ScreenUtil.screenSize(this).y * 0.7f) return
+            pagerKey = key
+        }
+        if (key != pagerKey) return // comments or another list
+        indexMode = true
+        when {
+            maxIndex < 0 -> maxIndex = from
+            from > maxIndex -> {
+                val steps = from - maxIndex
+                maxIndex = from
+                val now = SystemClock.uptimeMillis()
+                repeat(steps) { if (inPlayer) onNewReel(playerApp, now, animate = true) }
+            }
         }
     }
 
