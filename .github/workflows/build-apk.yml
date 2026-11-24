@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to publish the APK as a GitHub Release
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,3 +27,27 @@ jobs:
         with:
           name: NoScroll-apk
           path: NoScroll.apk
+
+      # Every build of main (and the dev branch) becomes the newest Release, so
+      # https://github.com/<owner>/<repo>/releases/latest/download/NoScroll.apk
+      # always downloads the latest APK directly (no zip).
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/claude/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          VERSION=$(grep -m1 versionName app/build.gradle.kts | sed -E 's/.*"(.*)".*/\1/')
+          TAG="v${VERSION}-build${{ github.run_number }}"
+          git log -1 --pretty=%B | grep -v -e '^Co-Authored-By' -e '^Claude-Session' > notes.md
+          printf '\n---\nBranch: `%s` · Commit: %s\n' "${GITHUB_REF_NAME}" "${GITHUB_SHA::7}" >> notes.md
+          gh release create "$TAG" NoScroll.apk \
+            --repo "$REPO" \
+            --target "$GITHUB_SHA" \
+            --title "NoScroll $VERSION (build ${{ github.run_number }})" \
+            --notes-file notes.md \
+            --latest
+          # Keep only the 5 newest releases.
+          gh release list --repo "$REPO" --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[5:][].tagName' |
+            xargs -r -I{} gh release delete {} --repo "$REPO" --cleanup-tag -y

@@ -2,6 +2,15 @@
 
 Android app that blocks Instagram Reels and YouTube Shorts. The rest of each app keeps working (feed, DMs, search, normal videos).
 
+## ⬇️ Download
+**[Download the latest NoScroll.apk](https://github.com/ViditChawda/noscroll/releases/latest/download/NoScroll.apk)**: always the newest build. Older builds are on the [Releases page](https://github.com/ViditChawda/noscroll/releases).
+
+## Features
+- Block Reels / Shorts (auto-exit the player) and cover their tab buttons
+- Or allow them with **daily limits**: time limit and reels limit (Reels + Shorts together)
+- Live counter pill at the top of the screen: this session's count, today's total, limit progress ring
+- Weekly stats with per-app bar charts and week-over-week comparison
+
 ## How it works
 An `AccessibilityService` (`BlockerService.kt`) watches only `com.instagram.android` and `com.google.android.youtube`. When it finds a view ID from the Reels/Shorts player on screen, it presses **Back** and shows a toast.
 
