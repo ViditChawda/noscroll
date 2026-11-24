@@ -198,10 +198,11 @@ class TabHider(private val service: AccessibilityService) {
 }
 
 /**
- * A small "island" pill just under the status bar:  [∞  14 reels  ◔]
+ * A small "island" pill just under the status bar:   [∞  12  34 today · 4m left  ◔]
+ *  - big number: reels in this visit to the app (resets each time you open it)
+ *  - small text: today's total, plus time left / limit when a daily limit is set
+ *  - ring: progress towards the nearest daily limit (hidden when there's no limit)
  * Kept compact (~28dp tall) so it barely covers the video.
- * Animations: grows in like an island, the number rolls up on every new reel,
- * the pill gives a soft pop, and the ring fills / shifts green → amber → red.
  */
 class ScrollCounterOverlay(private val ctx: Context) {
     private val wm = ctx.getSystemService(WindowManager::class.java)
@@ -215,30 +216,28 @@ class ScrollCounterOverlay(private val ctx: Context) {
     private lateinit var ring: RingView
     private var front: TextView? = null
 
-    private var count = 0
+    private var shownSession = -1
     private var hiding = false
+    private var popAnim: AnimatorSet? = null
 
     companion object {
-        /** The ring is full at this many reels in one sitting. */
-        private const val RING_FULL_AT = 30f
         private val GREEN = Color.parseColor("#34D399")
         private val AMBER = Color.parseColor("#FFB020")
         private val RED = Color.parseColor("#FF4F5E")
-        private fun colorFor(n: Int) = when {
-            n < 10 -> GREEN
-            n < 25 -> AMBER
+        private fun colorFor(p: Float) = when {
+            p < 0.6f -> GREEN
+            p < 0.85f -> AMBER
             else -> RED
         }
     }
 
-    fun show(initial: Int, noun: String) {
+    fun show(st: PillState) {
         if (root == null) build()
         val r = root ?: return
         hiding = false
-        count = initial
-        label.text = noun
-        front!!.text = initial.toString()
-        ring.set(initial / RING_FULL_AT, colorFor(initial), animate = false)
+        shownSession = st.session
+        front!!.text = st.session.toString()
+        applyState(st, animateRing = false)
 
         pill.animate().cancel()
         pill.pivotY = 0f
@@ -248,30 +247,39 @@ class ScrollCounterOverlay(private val ctx: Context) {
         pill.scaleY = 0.7f
         pill.animate()
             .translationY(0f).alpha(1f).scaleX(1f).scaleY(1f)
-            .setDuration(480)
-            .setInterpolator(OvershootInterpolator(1.4f))
+            .setDuration(420)
+            .setInterpolator(OvershootInterpolator(1.3f))
+            .withLayer()
             .setListener(null)
             .start()
         r.visibility = View.VISIBLE
     }
 
-    fun update(newCount: Int) {
-        if (root == null || hiding || newCount == count) return
-        count = newCount
-        rollTo(newCount.toString())
-        pop()
-        ring.set(newCount / RING_FULL_AT, colorFor(newCount), animate = true)
+    fun update(st: PillState, animateCount: Boolean) {
+        if (root == null || hiding) return
+        if (st.session != shownSession) {
+            shownSession = st.session
+            if (animateCount) {
+                rollTo(st.session.toString())
+                pop()
+            } else {
+                front?.text = st.session.toString()
+            }
+        }
+        applyState(st, animateRing = true)
     }
 
     fun hide() {
         val r = root ?: return
         if (hiding) return
         hiding = true
+        popAnim?.cancel()
         pill.animate().cancel()
         pill.animate()
             .translationY(-dp(12f)).alpha(0f).scaleX(0.5f).scaleY(0.7f)
-            .setDuration(220)
+            .setDuration(200)
             .setInterpolator(AccelerateInterpolator())
+            .withLayer()
             .setListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
                     if (hiding) removeNow(r)
@@ -290,6 +298,21 @@ class ScrollCounterOverlay(private val ctx: Context) {
         hiding = false
     }
 
+    private fun applyState(st: PillState, animateRing: Boolean) {
+        val parts = mutableListOf<String>()
+        parts += if (st.countLimit > 0) "${st.today}/${st.countLimit} today" else "${st.today} today"
+        if (st.timeLeftMs >= 0) parts += Limits.formatLeft(st.timeLeftMs)
+        val text = parts.joinToString(" · ")
+        if (label.text != text) label.text = text
+
+        if (st.progress < 0f) {
+            ring.visibility = View.GONE
+        } else {
+            ring.visibility = View.VISIBLE
+            ring.set(st.progress, colorFor(st.progress), if (animateRing) 480L else 0L)
+        }
+    }
+
     // ---- animations ----
 
     private fun rollTo(text: String) {
@@ -304,21 +327,28 @@ class ScrollCounterOverlay(private val ctx: Context) {
         incoming.translationY = h
         incoming.alpha = 0f
 
-        out.animate().translationY(-h).alpha(0f).setDuration(220)
-            .setInterpolator(AccelerateInterpolator()).start()
-        incoming.animate().translationY(0f).alpha(1f).setDuration(340)
-            .setInterpolator(OvershootInterpolator(2f)).start()
+        out.animate().translationY(-h).alpha(0f).setDuration(180)
+            .setInterpolator(AccelerateInterpolator()).withLayer().start()
+        incoming.animate().translationY(0f).alpha(1f).setDuration(300)
+            .setInterpolator(DecelerateInterpolator(1.5f)).withLayer().start()
         front = incoming
     }
 
     private fun pop() {
-        AnimatorSet().apply {
+        popAnim?.cancel()
+        pill.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        popAnim = AnimatorSet().apply {
             playTogether(
-                ObjectAnimator.ofFloat(pill, View.SCALE_X, 1f, 1.08f, 1f),
-                ObjectAnimator.ofFloat(pill, View.SCALE_Y, 1f, 1.08f, 1f),
+                ObjectAnimator.ofFloat(pill, View.SCALE_X, pill.scaleX, 1.08f, 1f),
+                ObjectAnimator.ofFloat(pill, View.SCALE_Y, pill.scaleY, 1.08f, 1f),
             )
-            duration = 300
+            duration = 260
             interpolator = DecelerateInterpolator()
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    pill.setLayerType(View.LAYER_TYPE_NONE, null)
+                }
+            })
             start()
         }
     }
@@ -334,7 +364,7 @@ class ScrollCounterOverlay(private val ctx: Context) {
                 setColor(Color.BLACK)
                 setStroke(dp(1f).toInt(), Color.parseColor("#26FFFFFF"))
             }
-            setPadding(dp(10f).toInt(), 0, dp(6f).toInt(), 0)
+            setPadding(dp(10f).toInt(), 0, dp(7f).toInt(), 0)
             elevation = dp(6f)
             minimumHeight = dp(28f).toInt()
         }
@@ -348,7 +378,7 @@ class ScrollCounterOverlay(private val ctx: Context) {
         val numBox = FrameLayout(ctx).apply { clipChildren = true; clipToPadding = true }
         fun numView() = TextView(ctx).apply {
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
             fontFeatureSettings = "tnum"
             includeFontPadding = false
@@ -365,15 +395,19 @@ class ScrollCounterOverlay(private val ctx: Context) {
         label = TextView(ctx).apply {
             setTextColor(Color.parseColor("#99FFFFFF"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            fontFeatureSettings = "tnum"
             includeFontPadding = false
+            maxLines = 1
         }
         pill.addView(label, LinearLayout.LayoutParams(wrap, wrap).apply {
-            marginStart = dp(4f).toInt()
-            marginEnd = dp(7f).toInt()
+            marginStart = dp(7f).toInt()
+            marginEnd = dp(4f).toInt()
         })
 
         ring = RingView(ctx)
-        pill.addView(ring, LinearLayout.LayoutParams(dp(16f).toInt(), dp(16f).toInt()))
+        pill.addView(ring, LinearLayout.LayoutParams(dp(16f).toInt(), dp(16f).toInt()).apply {
+            marginStart = dp(3f).toInt()
+        })
 
         // A little room around the pill so the pop/overshoot isn't clipped.
         val r = FrameLayout(ctx).apply {
@@ -413,11 +447,13 @@ private class RingView(ctx: Context) : View(ctx) {
     private val oval = android.graphics.RectF()
     private var progress = 0f
     private var anim: ValueAnimator? = null
+    private val argb = ArgbEvaluator()
 
-    fun set(target: Float, color: Int, animate: Boolean) {
+    fun set(target: Float, color: Int, durationMs: Long) {
         val to = target.coerceIn(0f, 1f)
+        if (to == progress && color == arc.color) return
         anim?.cancel()
-        if (!animate) {
+        if (durationMs <= 0) {
             progress = to
             arc.color = color
             invalidate()
@@ -425,10 +461,9 @@ private class RingView(ctx: Context) : View(ctx) {
         }
         val fromP = progress
         val fromC = arc.color
-        val argb = ArgbEvaluator()
         anim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 450
-            interpolator = DecelerateInterpolator()
+            duration = durationMs
+            interpolator = android.view.animation.LinearInterpolator()
             addUpdateListener {
                 val f = it.animatedValue as Float
                 progress = fromP + (to - fromP) * f
@@ -443,6 +478,6 @@ private class RingView(ctx: Context) : View(ctx) {
         val half = stroke / 2
         oval.set(half, half, width - half, height - half)
         canvas.drawOval(oval, track)
-        canvas.drawArc(oval, -90f, 360f * progress.coerceAtLeast(0.04f), false, arc)
+        canvas.drawArc(oval, -90f, 360f * progress.coerceAtLeast(0.03f), false, arc)
     }
 }

@@ -256,7 +256,7 @@
 
                     <TextView style="@style/NS.RowTitle" android:text="Instagram Reels" />
 
-                    <TextView style="@style/NS.RowSub" android:text="Bounce out of the Reels player" />
+                    <TextView style="@style/NS.RowSub" android:text="Always close Reels. Turn off to allow them with daily limits" />
                 </LinearLayout>
 
                 <com.google.android.material.materialswitch.MaterialSwitch
@@ -296,7 +296,7 @@
 
                     <TextView style="@style/NS.RowTitle" android:text="YouTube Shorts" />
 
-                    <TextView style="@style/NS.RowSub" android:text="Bounce out of the Shorts player" />
+                    <TextView style="@style/NS.RowSub" android:text="Always close Shorts. Turn off to allow them with daily limits" />
                 </LinearLayout>
 
                 <com.google.android.material.materialswitch.MaterialSwitch
@@ -336,7 +336,7 @@
 
                     <TextView style="@style/NS.RowTitle" android:text="Hide Reels &amp; Shorts tabs" />
 
-                    <TextView style="@style/NS.RowSub" android:text="While blocking is on, cover the bottom-bar button so you can&apos;t tap it" />
+                    <TextView style="@style/NS.RowSub" android:text="While blocked (or over a limit), cover the bottom-bar button" />
                 </LinearLayout>
 
                 <com.google.android.material.materialswitch.MaterialSwitch
@@ -386,7 +386,7 @@
 
                     <TextView style="@style/NS.RowTitle" android:text="Live scroll counter" />
 
-                    <TextView style="@style/NS.RowSub" android:text="When blocking is off, show today&apos;s count in a small pill at the top of the screen" />
+                    <TextView style="@style/NS.RowSub" android:text="Small pill at the top: this visit&apos;s count, today&apos;s total and limit progress" />
                 </LinearLayout>
 
                 <com.google.android.material.materialswitch.MaterialSwitch
@@ -395,6 +395,164 @@
                     android:layout_height="wrap_content" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- Daily limits -->
+        <TextView style="@style/NS.Section" android:text="Daily limits" />
+
+        <LinearLayout
+            android:id="@+id/limitsCard"
+            style="@style/NS.Card"
+            android:orientation="vertical"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
+
+            <LinearLayout
+                android:id="@+id/timeLimitRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:background="@drawable/bg_icon_chip"
+                        android:importantForAccessibility="no"
+                        android:padding="11dp"
+                        android:src="@drawable/ic_timer"
+                        app:tint="@color/brand_pink" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_marginEnd="8dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView style="@style/NS.RowTitle" android:text="Daily time limit" />
+
+                        <TextView
+                            android:id="@+id/timeLimitSub"
+                            style="@style/NS.RowSub" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/timeLimitValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_chip"
+                        android:fontFamily="sans-serif-medium"
+                        android:paddingStart="14dp"
+                        android:paddingTop="7dp"
+                        android:paddingEnd="14dp"
+                        android:paddingBottom="7dp"
+                        android:textColor="@color/ns_text"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <com.google.android.material.progressindicator.LinearProgressIndicator
+                    android:id="@+id/timeLimitProgress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="58dp"
+                    android:layout_marginTop="10dp"
+                    android:max="1000"
+                    app:indicatorColor="@color/brand_pink"
+                    app:trackColor="@color/ns_surface_2"
+                    app:trackCornerRadius="4dp"
+                    app:trackThickness="5dp" />
+            </LinearLayout>
+            <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="74dp" android:background="@color/ns_outline" />
+            <LinearLayout
+                android:id="@+id/countLimitRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="14dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:background="@drawable/bg_icon_chip"
+                        android:importantForAccessibility="no"
+                        android:padding="11dp"
+                        android:src="@drawable/ic_numbered"
+                        app:tint="@color/brand_pink" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_marginEnd="8dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView style="@style/NS.RowTitle" android:text="Daily reels limit" />
+
+                        <TextView
+                            android:id="@+id/countLimitSub"
+                            style="@style/NS.RowSub" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/countLimitValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_chip"
+                        android:fontFamily="sans-serif-medium"
+                        android:paddingStart="14dp"
+                        android:paddingTop="7dp"
+                        android:paddingEnd="14dp"
+                        android:paddingBottom="7dp"
+                        android:textColor="@color/ns_text"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <com.google.android.material.progressindicator.LinearProgressIndicator
+                    android:id="@+id/countLimitProgress"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="58dp"
+                    android:layout_marginTop="10dp"
+                    android:max="1000"
+                    app:indicatorColor="@color/brand_pink"
+                    app:trackColor="@color/ns_surface_2"
+                    app:trackCornerRadius="4dp"
+                    app:trackThickness="5dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/limitsNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:text="Limits count Reels and Shorts together and apply while blocking is off. When you hit one, Reels/Shorts close for the rest of the day. Raise it anytime to keep scrolling."
+            android:textColor="@color/ns_text_3"
+            android:textSize="12sp" />
 
         <!-- Privacy note -->
         <LinearLayout
