@@ -6,9 +6,11 @@ import android.animation.AnimatorSet
 import android.animation.ArgbEvaluator
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Point
@@ -17,6 +19,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.util.TypedValue
+import android.view.Display
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -75,53 +78,122 @@ object ScreenUtil {
 /**
  * Covers the Reels / Shorts tab button with a block painted in the nav bar's colour.
  * The block swallows taps, so the tab is effectively gone.
+ *
+ * On Android 11+ the colour is read from a screenshot of the actual bar, so it matches
+ * whatever theme the app itself is using. Older versions fall back to the system theme.
  */
-class TabHider(private val ctx: Context) {
-    private val wm = ctx.getSystemService(WindowManager::class.java)
+class TabHider(private val service: AccessibilityService) {
+    private val wm = service.getSystemService(WindowManager::class.java)
     private var view: View? = null
     private val params = ScreenUtil.overlayParams(touchable = true).apply { gravity = Gravity.TOP or Gravity.START }
     private val lastBounds = Rect()
-    private var lastColor = 0
 
-    @SuppressLint("ClickableViewAccessibility")
+    private var pendingBounds: Rect? = null
+    private var sampling = false
+    private val cachedColor = HashMap<Boolean, Int>() // isYouTube -> last sampled colour
+
     fun show(bounds: Rect, isYouTube: Boolean) {
-        val night = ScreenUtil.isNight(ctx)
-        val color = when {
-            !night -> Color.WHITE
-            isYouTube -> Color.parseColor("#0F0F0F")
-            else -> Color.BLACK
-        }
         val v = view
-        if (v != null && bounds == lastBounds && color == lastColor) return
+        if (v != null) {
+            if (bounds != lastBounds) place(v, bounds, update = true)
+            return
+        }
+        pendingBounds = Rect(bounds)
+        if (sampling) return
 
-        params.x = bounds.left
-        params.y = bounds.top
-        params.width = bounds.width()
-        params.height = bounds.height()
-        lastBounds.set(bounds)
-        lastColor = color
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            sampling = true
+            try {
+                service.takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    service.mainExecutor,
+                    object : AccessibilityService.TakeScreenshotCallback {
+                        override fun onSuccess(shot: AccessibilityService.ScreenshotResult) {
+                            sampling = false
+                            val color = sample(shot, bounds)
+                            if (color != null) cachedColor[isYouTube] = color
+                            addPending(color ?: fallback(isYouTube))
+                        }
 
-        try {
-            if (v == null) {
-                view = View(ctx).apply {
-                    setBackgroundColor(color)
-                    setOnTouchListener { _, _ -> true }
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }
-                wm.addView(view, params)
-            } else {
-                v.setBackgroundColor(color)
-                wm.updateViewLayout(v, params)
+                        override fun onFailure(errorCode: Int) {
+                            sampling = false
+                            addPending(fallback(isYouTube))
+                        }
+                    },
+                )
+            } catch (e: Exception) {
+                sampling = false
+                addPending(fallback(isYouTube))
             }
-        } catch (e: Exception) {
-            view = null
+        } else {
+            addPending(fallback(isYouTube))
         }
     }
 
     fun hide() {
+        pendingBounds = null
         view?.let { runCatching { wm.removeView(it) } }
         view = null
         lastBounds.setEmpty()
+    }
+
+    private fun fallback(isYouTube: Boolean): Int = cachedColor[isYouTube] ?: when {
+        !ScreenUtil.isNight(service) -> Color.WHITE
+        isYouTube -> Color.parseColor("#0F0F0F")
+        else -> Color.BLACK
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun addPending(color: Int) {
+        val b = pendingBounds ?: return // hidden while we were sampling
+        pendingBounds = null
+        if (view != null) return
+        val v = View(service).apply {
+            setBackgroundColor(color)
+            setOnTouchListener { _, _ -> true }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        if (place(v, b, update = false)) view = v
+    }
+
+    private fun place(v: View, b: Rect, update: Boolean): Boolean {
+        params.x = b.left
+        params.y = b.top
+        params.width = b.width()
+        params.height = b.height()
+        lastBounds.set(b)
+        return try {
+            if (update) wm.updateViewLayout(v, params) else wm.addView(v, params)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Most common colour along the top and bottom edges of the tab (the bar background). */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    private fun sample(shot: AccessibilityService.ScreenshotResult, b: Rect): Int? {
+        val buffer = shot.hardwareBuffer
+        return try {
+            val hw = Bitmap.wrapHardwareBuffer(buffer, shot.colorSpace) ?: return null
+            val bmp = hw.copy(Bitmap.Config.ARGB_8888, false)
+            hw.recycle()
+            val xs = listOf(b.left + 3, b.centerX(), b.right - 4)
+            val ys = listOf(b.top + 2, b.bottom - 3)
+            val counts = HashMap<Int, Int>()
+            for (x in xs) for (y in ys) {
+                if (x in 0 until bmp.width && y in 0 until bmp.height) {
+                    val c = bmp.getPixel(x, y) or 0xFF000000.toInt()
+                    counts[c] = (counts[c] ?: 0) + 1
+                }
+            }
+            bmp.recycle()
+            counts.maxByOrNull { it.value }?.key
+        } catch (e: Exception) {
+            null
+        } finally {
+            buffer.close()
+        }
     }
 }
 

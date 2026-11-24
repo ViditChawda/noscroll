@@ -59,12 +59,18 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
+        val openStats = View.OnClickListener { startActivity(Intent(this, StatsActivity::class.java)) }
+        findViewById<View>(R.id.viewAllBtn).setOnClickListener(openStats)
+        (findViewById<View>(R.id.blockedToday).parent as View).setOnClickListener(openStats)
+        (findViewById<View>(R.id.scrolledToday).parent as View).setOnClickListener(openStats)
+
         playEntrance()
     }
 
     override fun onResume() {
         super.onResume()
         renderStatus(isServiceEnabled())
+        updateTabsRow()
         countUp(findViewById(R.id.blockedToday), Prefs.blockedToday(this))
         countUp(findViewById(R.id.scrolledToday), Prefs.scrolledToday(this))
         findViewById<TextView>(R.id.blockedTotal).text = "All time: ${Prefs.blockedTotal(this)}"
@@ -110,8 +116,17 @@ class MainActivity : AppCompatActivity() {
     private fun bindRow(rowId: Int, switchId: Int, key: String) {
         val sw = findViewById<MaterialSwitch>(switchId)
         sw.isChecked = Prefs.get(this, key)
-        sw.setOnCheckedChangeListener { _, checked -> Prefs.set(this, key, checked) }
+        sw.setOnCheckedChangeListener { _, checked ->
+            Prefs.set(this, key, checked)
+            updateTabsRow()
+        }
         findViewById<View>(rowId).setOnClickListener { sw.toggle() }
+    }
+
+    /** "Hide tabs" only does something while at least one blocker is on. */
+    private fun updateTabsRow() {
+        val anyBlock = Prefs.get(this, Prefs.BLOCK_REELS) || Prefs.get(this, Prefs.BLOCK_SHORTS)
+        findViewById<View>(R.id.tabsRow).alpha = if (anyBlock) 1f else 0.45f
     }
 
     /** Numbers tick up from 0 when you open the app. */

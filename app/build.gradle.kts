@@ -11,8 +11,8 @@ android {
         applicationId = "com.vidit.noscroll"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     // A fixed debug key (standard public "android" password, not a secret) so every

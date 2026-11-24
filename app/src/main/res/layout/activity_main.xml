@@ -114,7 +114,28 @@
         </LinearLayout>
 
         <!-- Stats -->
-        <TextView style="@style/NS.Section" android:text="Today" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                style="@style/NS.Section"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Today" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/viewAllBtn"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:text="View all  ›"
+                android:textAllCaps="false"
+                android:textColor="@color/brand_pink" />
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -126,6 +147,9 @@
             style="@style/NS.Card"
             android:layout_width="0dp"
             android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             android:orientation="vertical"
             android:padding="18dp">
 
@@ -159,6 +183,9 @@
             style="@style/NS.Card"
             android:layout_width="0dp"
             android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
             android:orientation="vertical"
             android:padding="18dp">
 
@@ -309,7 +336,7 @@
 
                     <TextView style="@style/NS.RowTitle" android:text="Hide Reels &amp; Shorts tabs" />
 
-                    <TextView style="@style/NS.RowSub" android:text="Cover the bottom-bar buttons so you can&apos;t tap them" />
+                    <TextView style="@style/NS.RowSub" android:text="While blocking is on, cover the bottom-bar button so you can&apos;t tap it" />
                 </LinearLayout>
 
                 <com.google.android.material.materialswitch.MaterialSwitch
@@ -359,7 +386,7 @@
 
                     <TextView style="@style/NS.RowTitle" android:text="Live scroll counter" />
 
-                    <TextView style="@style/NS.RowSub" android:text="When blocking is off, show how many you&apos;ve scrolled at the top of the screen" />
+                    <TextView style="@style/NS.RowSub" android:text="When blocking is off, show today&apos;s count in a small pill at the top of the screen" />
                 </LinearLayout>
 
                 <com.google.android.material.materialswitch.MaterialSwitch

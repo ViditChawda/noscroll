@@ -68,7 +68,7 @@ class BlockerService : AccessibilityService() {
     private var inPlayer = false
     private var playerPkg: String? = null
     private var lastSeenPlayer = 0L
-    private var sessionCount = 0
+    private var playerApp = App.IG
     private var maxIndex = -1
     private var lastScrollAt = 0L
 
@@ -109,11 +109,12 @@ class BlockerService : AccessibilityService() {
             return
         }
         val isYt = pkg == YT
+        val app = if (isYt) App.YT else App.IG
         if (DEBUG_DUMP) dump(root, 0)
 
         // 1) Reels / Shorts player
         val playerOnScreen = containsAnyId(root, if (isYt) YT_SHORTS_IDS else IG_REELS_IDS, 0)
-        val blockOn = Prefs.get(this, if (isYt) Prefs.BLOCK_SHORTS else Prefs.BLOCK_REELS)
+        val blockOn = Prefs.blockEnabled(this, app)
         val now = SystemClock.uptimeMillis()
 
         if (playerOnScreen && blockOn) {
@@ -121,21 +122,22 @@ class BlockerService : AccessibilityService() {
             if (now - lastBack >= BACK_COOLDOWN_MS) {
                 lastBack = now
                 performGlobalAction(GLOBAL_ACTION_BACK)
-                Prefs.addBlocked(this)
+                Prefs.addBlocked(this, app)
                 val label = if (isYt) "Shorts" else "Reels"
                 Toast.makeText(this, "$label blocked 🚫", Toast.LENGTH_SHORT).show()
                 Log.d(TAG, "Blocked $label")
             }
         } else if (playerOnScreen && Prefs.get(this, Prefs.SHOW_COUNTER)) {
             lastSeenPlayer = now
-            enterPlayer(pkg!!)
+            enterPlayer(pkg!!, app)
         } else if (inPlayer) {
             if (playerPkg != pkg || now - lastSeenPlayer >= PLAYER_EXIT_GRACE_MS) exitPlayer()
             else scheduleScan(PLAYER_EXIT_GRACE_MS) // re-check once the grace period is over
         }
 
-        // 2) Reels / Shorts tab button
-        if (Prefs.get(this, Prefs.HIDE_TABS)) {
+        // 2) Reels / Shorts tab button: only covered while blocking is on for this app.
+        //    (Counter-only mode leaves the tab alone.)
+        if (blockOn && Prefs.get(this, Prefs.HIDE_TABS)) {
             val bounds = findTabBounds(root, isYt)
             if (bounds != null) tabHider.show(bounds, isYt) else tabHider.hide()
         } else {
@@ -145,15 +147,16 @@ class BlockerService : AccessibilityService() {
 
     // ---------- Reel counting ----------
 
-    private fun enterPlayer(pkg: String) {
+    private fun enterPlayer(pkg: String, app: App) {
         if (inPlayer && playerPkg == pkg) return
         inPlayer = true
         playerPkg = pkg
-        sessionCount = 1 // the reel you just opened counts
+        playerApp = app
         maxIndex = -1
         lastScrollAt = SystemClock.uptimeMillis()
-        Prefs.addScrolled(this, 1)
-        counter.show(sessionCount, if (pkg == YT) "shorts" else "reels")
+        // The reel you just opened counts. The pill shows today's total for this app.
+        val today = Prefs.addScrolled(this, app, 1)
+        counter.show(today, if (app == App.YT) "shorts today" else "reels today")
     }
 
     private fun exitPlayer() {
@@ -184,9 +187,7 @@ class BlockerService : AccessibilityService() {
 
     private fun bump(n: Int) {
         if (n <= 0) return
-        sessionCount += n
-        Prefs.addScrolled(this, n)
-        counter.update(sessionCount)
+        counter.update(Prefs.addScrolled(this, playerApp, n))
     }
 
     // ---------- Tree helpers ----------
