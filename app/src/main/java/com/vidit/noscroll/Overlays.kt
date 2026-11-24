@@ -126,9 +126,10 @@ class TabHider(private val ctx: Context) {
 }
 
 /**
- * A floating pill at the top of the screen: "● 12 reels".
- * Slides in with a bounce, the number rolls up on each new reel, the pill pulses,
- * and the accent colour shifts green → amber → red the more you scroll.
+ * A small "island" pill just under the status bar:  [∞  14 reels  ◔]
+ * Kept compact (~28dp tall) so it barely covers the video.
+ * Animations: grows in like an island, the number rolls up on every new reel,
+ * the pill gives a soft pop, and the ring fills / shifts green → amber → red.
  */
 class ScrollCounterOverlay(private val ctx: Context) {
     private val wm = ctx.getSystemService(WindowManager::class.java)
@@ -136,25 +137,21 @@ class ScrollCounterOverlay(private val ctx: Context) {
 
     private var root: FrameLayout? = null
     private lateinit var pill: LinearLayout
-    private lateinit var pillBg: GradientDrawable
-    private lateinit var dot: View
-    private lateinit var dotBg: GradientDrawable
-    private lateinit var halo: View
-    private lateinit var haloBg: GradientDrawable
     private lateinit var numA: TextView
     private lateinit var numB: TextView
     private lateinit var label: TextView
+    private lateinit var ring: RingView
     private var front: TextView? = null
 
     private var count = 0
-    private var accent = GREEN
-    private var colorAnim: ValueAnimator? = null
     private var hiding = false
 
     companion object {
+        /** The ring is full at this many reels in one sitting. */
+        private const val RING_FULL_AT = 30f
         private val GREEN = Color.parseColor("#34D399")
-        private val AMBER = Color.parseColor("#FBBF24")
-        private val RED = Color.parseColor("#FF3D7F")
+        private val AMBER = Color.parseColor("#FFB020")
+        private val RED = Color.parseColor("#FF4F5E")
         private fun colorFor(n: Int) = when {
             n < 10 -> GREEN
             n < 25 -> AMBER
@@ -169,17 +166,18 @@ class ScrollCounterOverlay(private val ctx: Context) {
         count = initial
         label.text = noun
         front!!.text = initial.toString()
-        setAccent(colorFor(initial), animate = false)
+        ring.set(initial / RING_FULL_AT, colorFor(initial), animate = false)
 
         pill.animate().cancel()
-        pill.translationY = -dp(90f)
+        pill.pivotY = 0f
+        pill.translationY = -dp(12f)
         pill.alpha = 0f
-        pill.scaleX = 0.7f
+        pill.scaleX = 0.5f
         pill.scaleY = 0.7f
         pill.animate()
             .translationY(0f).alpha(1f).scaleX(1f).scaleY(1f)
-            .setDuration(520)
-            .setInterpolator(OvershootInterpolator(1.6f))
+            .setDuration(480)
+            .setInterpolator(OvershootInterpolator(1.4f))
             .setListener(null)
             .start()
         r.visibility = View.VISIBLE
@@ -189,9 +187,8 @@ class ScrollCounterOverlay(private val ctx: Context) {
         if (root == null || hiding || newCount == count) return
         count = newCount
         rollTo(newCount.toString())
-        pulse()
-        val c = colorFor(newCount)
-        if (c != accent) setAccent(c, animate = true)
+        pop()
+        ring.set(newCount / RING_FULL_AT, colorFor(newCount), animate = true)
     }
 
     fun hide() {
@@ -200,8 +197,8 @@ class ScrollCounterOverlay(private val ctx: Context) {
         hiding = true
         pill.animate().cancel()
         pill.animate()
-            .translationY(-dp(90f)).alpha(0f).scaleX(0.8f).scaleY(0.8f)
-            .setDuration(260)
+            .translationY(-dp(12f)).alpha(0f).scaleX(0.5f).scaleY(0.7f)
+            .setDuration(220)
             .setInterpolator(AccelerateInterpolator())
             .setListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
@@ -219,7 +216,6 @@ class ScrollCounterOverlay(private val ctx: Context) {
         runCatching { wm.removeView(r) }
         if (root === r) root = null
         hiding = false
-        colorAnim?.cancel()
     }
 
     // ---- animations ----
@@ -227,7 +223,7 @@ class ScrollCounterOverlay(private val ctx: Context) {
     private fun rollTo(text: String) {
         val out = front ?: return
         val incoming = if (out === numA) numB else numA
-        val h = dp(26f)
+        val h = dp(16f)
 
         out.animate().cancel()
         incoming.animate().cancel()
@@ -235,125 +231,90 @@ class ScrollCounterOverlay(private val ctx: Context) {
         incoming.text = text
         incoming.translationY = h
         incoming.alpha = 0f
-        incoming.visibility = View.VISIBLE
 
-        out.animate().translationY(-h).alpha(0f).setDuration(260)
+        out.animate().translationY(-h).alpha(0f).setDuration(220)
             .setInterpolator(AccelerateInterpolator()).start()
-        incoming.animate().translationY(0f).alpha(1f).setDuration(380)
+        incoming.animate().translationY(0f).alpha(1f).setDuration(340)
             .setInterpolator(OvershootInterpolator(2f)).start()
         front = incoming
     }
 
-    private fun pulse() {
-        val sx = ObjectAnimator.ofFloat(pill, View.SCALE_X, 1f, 1.14f, 1f)
-        val sy = ObjectAnimator.ofFloat(pill, View.SCALE_Y, 1f, 1.14f, 1f)
-        val hs = ObjectAnimator.ofFloat(halo, View.SCALE_X, 1f, 2.8f)
-        val hsy = ObjectAnimator.ofFloat(halo, View.SCALE_Y, 1f, 2.8f)
-        val ha = ObjectAnimator.ofFloat(halo, View.ALPHA, 0.7f, 0f)
+    private fun pop() {
         AnimatorSet().apply {
-            playTogether(sx, sy)
-            duration = 340
+            playTogether(
+                ObjectAnimator.ofFloat(pill, View.SCALE_X, 1f, 1.08f, 1f),
+                ObjectAnimator.ofFloat(pill, View.SCALE_Y, 1f, 1.08f, 1f),
+            )
+            duration = 300
             interpolator = DecelerateInterpolator()
             start()
         }
-        AnimatorSet().apply {
-            playTogether(hs, hsy, ha)
-            duration = 650
-            interpolator = DecelerateInterpolator()
-            start()
-        }
-    }
-
-    private fun setAccent(target: Int, animate: Boolean) {
-        colorAnim?.cancel()
-        if (!animate) {
-            applyAccent(target)
-            return
-        }
-        colorAnim = ValueAnimator.ofObject(ArgbEvaluator(), accent, target).apply {
-            duration = 500
-            addUpdateListener { applyAccent(it.animatedValue as Int) }
-            start()
-        }
-    }
-
-    private fun applyAccent(c: Int) {
-        accent = c
-        dotBg.setColor(c)
-        haloBg.setColor(c)
-        pillBg.setStroke(dp(1.5f).toInt(), (c and 0x00FFFFFF) or (0xAA shl 24))
     }
 
     // ---- view building ----
 
     private fun build() {
-        val pad = dp(14f).toInt()
-
-        pillBg = GradientDrawable().apply {
-            cornerRadius = dp(100f)
-            setColor(Color.parseColor("#E6121018"))
-        }
         pill = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = pillBg
-            setPadding(pad, dp(8f).toInt(), dp(18f).toInt(), dp(8f).toInt())
-            elevation = dp(8f)
-            clipChildren = false
-            clipToPadding = false
+            background = GradientDrawable().apply {
+                cornerRadius = dp(100f)
+                setColor(Color.BLACK)
+                setStroke(dp(1f).toInt(), Color.parseColor("#26FFFFFF"))
+            }
+            setPadding(dp(10f).toInt(), 0, dp(6f).toInt(), 0)
+            elevation = dp(6f)
+            minimumHeight = dp(28f).toInt()
         }
 
-        // Dot with an expanding halo that "pings" on every new reel.
-        val dotSize = dp(10f).toInt()
-        val dotBox = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
-        haloBg = GradientDrawable().apply { shape = GradientDrawable.OVAL }
-        halo = View(ctx).apply { background = haloBg; alpha = 0f }
-        dotBg = GradientDrawable().apply { shape = GradientDrawable.OVAL }
-        dot = View(ctx).apply { background = dotBg }
-        dotBox.addView(halo, FrameLayout.LayoutParams(dotSize, dotSize, Gravity.CENTER))
-        dotBox.addView(dot, FrameLayout.LayoutParams(dotSize, dotSize, Gravity.CENTER))
-        pill.addView(dotBox, LinearLayout.LayoutParams(dp(14f).toInt(), dp(14f).toInt()).apply {
-            marginEnd = dp(10f).toInt()
+        val logo = android.widget.ImageView(ctx).apply { setImageResource(R.drawable.ic_infinity_mini) }
+        pill.addView(logo, LinearLayout.LayoutParams(dp(16f).toInt(), dp(8f).toInt()).apply {
+            marginEnd = dp(7f).toInt()
         })
 
         // Two stacked number views that swap places for the rolling effect.
         val numBox = FrameLayout(ctx).apply { clipChildren = true; clipToPadding = true }
         fun numView() = TextView(ctx).apply {
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-            typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+            fontFeatureSettings = "tnum"
             includeFontPadding = false
             gravity = Gravity.CENTER
         }
         numA = numView()
         numB = numView().apply { alpha = 0f }
-        numBox.addView(numA, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        numBox.addView(numB, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        numBox.minimumWidth = dp(26f).toInt()
+        val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+        numBox.addView(numA, FrameLayout.LayoutParams(wrap, wrap, Gravity.CENTER))
+        numBox.addView(numB, FrameLayout.LayoutParams(wrap, wrap, Gravity.CENTER))
         front = numA
-        pill.addView(numBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26f).toInt()))
+        pill.addView(numBox, LinearLayout.LayoutParams(wrap, dp(18f).toInt()))
 
         label = TextView(ctx).apply {
-            setTextColor(Color.parseColor("#B3FFFFFF"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(Color.parseColor("#99FFFFFF"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            includeFontPadding = false
         }
-        pill.addView(label, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            marginStart = dp(6f).toInt()
+        pill.addView(label, LinearLayout.LayoutParams(wrap, wrap).apply {
+            marginStart = dp(4f).toInt()
+            marginEnd = dp(7f).toInt()
         })
 
-        // Root has room around the pill so the pulse/overshoot isn't clipped.
+        ring = RingView(ctx)
+        pill.addView(ring, LinearLayout.LayoutParams(dp(16f).toInt(), dp(16f).toInt()))
+
+        // A little room around the pill so the pop/overshoot isn't clipped.
         val r = FrameLayout(ctx).apply {
             clipChildren = false
             clipToPadding = false
-            setPadding(dp(16f).toInt(), dp(6f).toInt(), dp(16f).toInt(), dp(12f).toInt())
+            setPadding(dp(8f).toInt(), dp(4f).toInt(), dp(8f).toInt(), dp(8f).toInt())
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         }
-        r.addView(pill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        r.addView(pill, FrameLayout.LayoutParams(wrap, wrap, Gravity.CENTER))
 
         val params = ScreenUtil.overlayParams(touchable = false).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = ScreenUtil.statusBarHeight(ctx) + dp(4f).toInt()
+            y = ScreenUtil.statusBarHeight(ctx)
         }
         try {
             wm.addView(r, params)
@@ -361,5 +322,55 @@ class ScrollCounterOverlay(private val ctx: Context) {
         } catch (e: Exception) {
             root = null
         }
+    }
+}
+
+/** Small progress ring that animates its fill and colour. */
+private class RingView(ctx: Context) : View(ctx) {
+    private val stroke = ScreenUtil.dp(ctx, 2.5f)
+    private val track = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = stroke
+        color = Color.parseColor("#26FFFFFF")
+    }
+    private val arc = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = stroke
+        strokeCap = android.graphics.Paint.Cap.ROUND
+    }
+    private val oval = android.graphics.RectF()
+    private var progress = 0f
+    private var anim: ValueAnimator? = null
+
+    fun set(target: Float, color: Int, animate: Boolean) {
+        val to = target.coerceIn(0f, 1f)
+        anim?.cancel()
+        if (!animate) {
+            progress = to
+            arc.color = color
+            invalidate()
+            return
+        }
+        val fromP = progress
+        val fromC = arc.color
+        val argb = ArgbEvaluator()
+        anim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 450
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                val f = it.animatedValue as Float
+                progress = fromP + (to - fromP) * f
+                arc.color = argb.evaluate(f, fromC, color) as Int
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        val half = stroke / 2
+        oval.set(half, half, width - half, height - half)
+        canvas.drawOval(oval, track)
+        canvas.drawArc(oval, -90f, 360f * progress.coerceAtLeast(0.04f), false, arc)
     }
 }
